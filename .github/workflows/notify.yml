@@ -16,21 +16,24 @@ jobs:
   push:
     runs-on: ubuntu-latest
     steps:
-      - name: Get a Firebase access token from the service account
-        id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          token_format: access_token
-          access_token_scopes: https://www.googleapis.com/auth/firebase.messaging
-
       - name: Send the push to topic "updates"
         env:
-          TOKEN: ${{ steps.auth.outputs.access_token }}
+          SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           VERSION: ${{ github.event.release.tag_name || 'manual' }}
         run: |
-          curl -sS --fail-with-body -X POST \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            "https://fcm.googleapis.com/v1/projects/doomscroll-fd192/messages:send" \
-            -d "{\"message\":{\"topic\":\"updates\",\"data\":{\"type\":\"update\",\"version\":\"$VERSION\"},\"android\":{\"priority\":\"high\"}}}"
+          pip install --quiet google-auth requests
+          python3 - <<'PY'
+          import json, os
+          import google.auth.transport.requests as tr
+          from google.oauth2 import service_account
+          info = json.loads(os.environ["SERVICE_ACCOUNT"])
+          creds = service_account.Credentials.from_service_account_info(
+              info, scopes=["https://www.googleapis.com/auth/firebase.messaging"])
+          session = tr.AuthorizedSession(creds)
+          body = {"message": {"topic": "updates",
+                              "data": {"type": "update", "version": os.environ["VERSION"]},
+                              "android": {"priority": "high"}}}
+          r = session.post(f"https://fcm.googleapis.com/v1/projects/{info['project_id']}/messages:send", json=body)
+          print(r.status_code, r.text)
+          r.raise_for_status()
+          PY
